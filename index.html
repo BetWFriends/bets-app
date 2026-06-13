@@ -491,9 +491,9 @@ async function claimUsername() {
     }
     const displayName = displayNameFor(user);
     await usernamesCol.doc(key).set({ uid: user.uid, displayName });
-    await usersCol.doc(user.uid).set({ username: raw, displayName, email: user.email || null });
+    await usersCol.doc(user.uid).set({ username: key, displayName, email: user.email || null });
 
-    currentUser = raw;
+    currentUser = key;
     currentUserDisplayName = displayName;
     document.getElementById('username-screen').style.display = 'none';
     await loadFriends();
@@ -531,8 +531,8 @@ function startRequestsListener() {
     .where('status', '==', 'pending')
     .onSnapshot(snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      incomingRequests = all.filter(r => r.to === currentUser);
-      outgoingRequests = all.filter(r => r.from === currentUser);
+      incomingRequests = all.filter(r => (r.to||'').toLowerCase() === currentUser.toLowerCase());
+      outgoingRequests = all.filter(r => (r.from||'').toLowerCase() === currentUser.toLowerCase());
       updateFriendsBadge();
       if (currentTab === 'friends') renderFriendsView();
     }, err => console.error('Friend requests listener error', err));
@@ -794,7 +794,18 @@ async function load() {
       try {
         const userDoc = await usersCol.doc(user.uid).get();
         if (userDoc.exists && userDoc.data().username) {
-          currentUser = userDoc.data().username;
+          let username = userDoc.data().username;
+          const lower = username.toLowerCase();
+          if (username !== lower) {
+            // Migrate to lowercase for consistency
+            try {
+              await usersCol.doc(user.uid).set({ username: lower }, { merge: true });
+              const oldUsernameDoc = await usernamesCol.doc(username.toLowerCase()).get();
+              await usernamesCol.doc(lower).set({ uid: user.uid, displayName: (oldUsernameDoc.exists && oldUsernameDoc.data().displayName) || username }, { merge: true });
+            } catch(e) {}
+            username = lower;
+          }
+          currentUser = username;
           currentUserDisplayName = userDoc.data().displayName || displayNameFor(user);
           await loadFriends();
           showApp();
