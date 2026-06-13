@@ -191,6 +191,17 @@
   </div>
 </div>
 
+<div class="login-screen" id="username-screen" style="display:none">
+  <i class="ti ti-user-circle"></i>
+  <h1>Choose a username</h1>
+  <p>This is how friends will find and add you.</p>
+  <div class="login-list" style="max-width:320px">
+    <input id="username-input" type="text" placeholder="username" autocomplete="off" style="width:100%;padding:11px 12px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:16px" />
+  </div>
+  <p id="username-error" style="color:#A32D2D;font-size:12px;margin-top:6px;min-height:16px"></p>
+  <button class="btn btn-primary" style="width:100%;max-width:320px;justify-content:center;padding:12px" onclick="claimUsername()">Continue</button>
+</div>
+
 <div class="app" id="main-app" style="display:none">
   <div class="topbar">
     <h1>Bets</h1>
@@ -212,7 +223,7 @@
       <div class="field">
         <label>Add a friend by email</label>
         <div style="display:flex;gap:8px">
-          <input id="friend-email" type="email" placeholder="friend@example.com" style="flex:1" autocomplete="off" />
+          <input id="friend-email" type="text" placeholder="username" style="flex:1" autocomplete="off" />
           <button class="btn btn-primary btn-sm" onclick="addFriend()"><i class="ti ti-plus"></i></button>
         </div>
         <p id="friend-error" style="color:#A32D2D;font-size:12px;margin-top:6px;min-height:16px"></p>
@@ -323,9 +334,11 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
 const betsCol = db.collection('bets');
-const profilesDoc = db.collection('meta').doc('profiles');
 const friendsCol = db.collection('friends');
+const usersCol = db.collection('users');       // doc id = uid -> {username, displayName, email}
+const usernamesCol = db.collection('usernames'); // doc id = lowercase username -> {uid, displayName}
 let currentUserEmail = null;
+let currentUserDisplayName = null;
 let friends = [];
 const VAPID_KEY = "BNkn43aKxGZ0080wMiRSNP4oaWMpXhkRlZC_7tc1esK3w_0ZOFKgCGJy0_6Tyjhbf8ovUp1gVX1t1I9-hCf8XH8";
 let messaging = null;
@@ -395,13 +408,13 @@ async function deleteMyAccount() {
   const ok2 = confirm('Are you sure? This is permanent.');
   if (!ok2) return;
 
-  const email = currentUserEmail;
-  const name = currentUser;
+  const username = currentUser;
+  const uid = auth.currentUser.uid;
 
   try {
     // Remove this user's own friends list
-    if (email) {
-      try { await friendsCol.doc(email).delete(); } catch(e) {}
+    if (username) {
+      try { await friendsCol.doc(username).delete(); } catch(e) {}
     }
     // Remove this user from other users' friends lists
     try {
@@ -409,8 +422,8 @@ async function deleteMyAccount() {
       const batchPromises = [];
       allFriends.forEach(doc => {
         const list = (doc.data().list) || [];
-        if (list.some(f => f.email && f.email.toLowerCase() === (email||'').toLowerCase())) {
-          const newList = list.filter(f => !(f.email && f.email.toLowerCase() === (email||'').toLowerCase()));
+        if (list.some(f => f.username && f.username.toLowerCase() === (username||'').toLowerCase())) {
+          const newList = list.filter(f => !(f.username && f.username.toLowerCase() === (username||'').toLowerCase()));
           batchPromises.push(doc.ref.set({ list: newList }));
         }
       });
@@ -418,17 +431,12 @@ async function deleteMyAccount() {
     } catch(e) {}
     // Remove device tokens for this user
     try {
-      const tokens = await db.collection('deviceTokens').where('user', '==', name).get();
+      const tokens = await db.collection('deviceTokens').where('user', '==', username).get();
       await Promise.all(tokens.docs.map(d => d.ref.delete()));
     } catch(e) {}
-    // Remove from profiles registry
-    try {
-      const profilesSnap = await profilesDoc.get();
-      const names = (profilesSnap.exists && profilesSnap.data().names) || [];
-      if (names.includes(name)) {
-        await profilesDoc.set({ names: names.filter(n => n !== name) });
-      }
-    } catch(e) {}
+    // Remove username reservation and user record
+    try { await usernamesCol.doc(username.toLowerCase()).delete(); } catch(e) {}
+    try { await usersCol.doc(uid).delete(); } catch(e) {}
 
     // Finally, delete the auth account
     await auth.currentUser.delete();
@@ -445,40 +453,74 @@ function displayNameFor(user) {
   return user.displayName || user.email || 'User';
 }
 
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+
+async function claimUsername() {
+  const errEl = document.getElementById('username-error');
+  errEl.textContent = '';
+  const raw = document.getElementById('username-input').value.trim();
+  if (!USERNAME_RE.test(raw)) {
+    errEl.textContent = '3-20 characters: letters, numbers, underscores only.';
+    return;
+  }
+  const key = raw.toLowerCase();
+  const user = auth.currentUser;
+  if (!user) return;
+
+  try {
+    const existing = await usernamesCol.doc(key).get();
+    if (existing.exists) {
+      errEl.textContent = 'That username is taken. Try another.';
+      return;
+    }
+    const displayName = displayNameFor(user);
+    await usernamesCol.doc(key).set({ uid: user.uid, displayName });
+    await usersCol.doc(user.uid).set({ username: raw, displayName, email: user.email || null });
+
+    currentUser = raw;
+    currentUserDisplayName = displayName;
+    document.getElementById('username-screen').style.display = 'none';
+    await loadFriends();
+    showApp();
+  } catch(e) {
+    errEl.textContent = 'Something went wrong. Try again.';
+    console.error(e);
+  }
+}
+
 function renderProfilePill() {
   const pill = document.getElementById('profile-pill');
   if (!currentUser) { pill.innerHTML = ''; return; }
   const [bg,fg] = avatarColor(currentUser);
-  pill.innerHTML = `<div class="lb-avatar" style="background:${bg};color:${fg}">${initials(currentUser)}</div><span>${currentUser}</span>`;
+  pill.innerHTML = `<div class="lb-avatar" style="background:${bg};color:${fg}">${initials(currentUser)}</div><span>@${currentUser}</span>`;
 }
 
 // ---------- Friends ----------
 async function loadFriends() {
-  if (!currentUserEmail) { friends = []; return; }
+  if (!currentUser) { friends = []; return; }
   try {
-    const doc = await friendsCol.doc(currentUserEmail).get();
+    const doc = await friendsCol.doc(currentUser).get();
     friends = (doc.exists && doc.data().list) || [];
   } catch(e) { friends = []; }
 }
 async function saveFriends() {
-  if (!currentUserEmail) return;
-  try { await friendsCol.doc(currentUserEmail).set({ list: friends }); } catch(e) {}
+  if (!currentUser) return;
+  try { await friendsCol.doc(currentUser).set({ list: friends }); } catch(e) {}
 }
 
 function renderFriendsList() {
   const el = document.getElementById('friends-list');
   if (!friends.length) {
-    el.innerHTML = `<p style="font-size:13px;color:var(--text2)">No friends added yet. Add one by email above — they'll appear once they've signed in at least once.</p>`;
+    el.innerHTML = `<p style="font-size:13px;color:var(--text2)">No friends added yet. Add one by username above.</p>`;
     return;
   }
   el.innerHTML = friends.map((f,i) => {
-    const [bg,fg] = avatarColor(f.name);
+    const [bg,fg] = avatarColor(f.username);
     return `<div class="login-profile" style="cursor:default;justify-content:space-between">
       <div style="display:flex;align-items:center;gap:12px;min-width:0">
-        <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(f.name)}</div>
+        <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(f.username)}</div>
         <div style="min-width:0">
-          <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>
-          <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.email}</div>
+          <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${f.username}</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
@@ -491,28 +533,29 @@ function renderFriendsList() {
 
 async function addFriend() {
   const input = document.getElementById('friend-email');
-  const email = input.value.trim().toLowerCase();
+  const raw = input.value.trim();
+  const key = raw.toLowerCase().replace(/^@/, '');
   const errEl = document.getElementById('friend-error');
   errEl.textContent = '';
-  if (!email) return;
-  if (email === currentUserEmail.toLowerCase()) { errEl.textContent = "That's your own email."; return; }
-  if (friends.some(f => f.email.toLowerCase() === email)) { errEl.textContent = 'Already in your friends list.'; return; }
+  if (!key) return;
+  if (key === currentUser.toLowerCase()) { errEl.textContent = "That's your own username."; return; }
+  if (friends.some(f => f.username.toLowerCase() === key)) { errEl.textContent = 'Already in your friends list.'; return; }
 
-  // Try to find their display name from past bets / profiles
-  let name = email;
-  const match = entries.find(e =>
-    (e.personAEmail && e.personAEmail.toLowerCase() === email) ||
-    (e.personBEmail && e.personBEmail.toLowerCase() === email)
-  );
-  if (match) {
-    name = (match.personAEmail && match.personAEmail.toLowerCase() === email) ? match.personA : match.personB;
+  try {
+    const doc = await usernamesCol.doc(key).get();
+    if (!doc.exists) {
+      errEl.textContent = 'No user found with that username.';
+      return;
+    }
+    friends.push({ username: key, displayName: doc.data().displayName || key });
+    await saveFriends();
+    input.value = '';
+    renderFriendsList();
+    populateFriendDropdown();
+  } catch(e) {
+    errEl.textContent = 'Something went wrong. Try again.';
+    console.error(e);
   }
-
-  friends.push({ name, email });
-  await saveFriends();
-  input.value = '';
-  renderFriendsList();
-  populateFriendDropdown();
 }
 
 async function removeFriend(idx) {
@@ -527,15 +570,15 @@ function newBetWithFriend(idx) {
   if (!f) return;
   openNew();
   populateFriendDropdown();
-  document.getElementById('f-b-name').value = f.name;
+  document.getElementById('f-b-name').value = f.username;
 }
 
 function populateFriendDropdown() {
   const sel = document.getElementById('f-b-name');
   const current = sel.value;
   sel.innerHTML = '<option value="">Select a friend...</option>' +
-    friends.map(f => `<option value="${f.name.replace(/"/g,'&quot;')}" data-email="${f.email}">${f.name}</option>`).join('');
-  if (friends.some(f => f.name === current)) sel.value = current;
+    friends.map(f => `<option value="${f.username}">${f.displayName || f.username} (@${f.username})</option>`).join('');
+  if (friends.some(f => f.username === current)) sel.value = current;
 }
 
 function showApp() {
@@ -610,23 +653,32 @@ async function updateEntryInDb(id, fields) {
 async function load() {
   auth.onAuthStateChanged(async (user) => {
     if (user) {
-      currentUser = displayNameFor(user);
       currentUserEmail = user.email;
-      // Keep a registry of users for the leaderboard / lookups (optional, best-effort)
       try {
-        const profilesSnap = await profilesDoc.get();
-        const names = (profilesSnap.exists && profilesSnap.data().names) || [];
-        if (!names.includes(currentUser)) {
-          names.push(currentUser);
-          await profilesDoc.set({ names });
+        const userDoc = await usersCol.doc(user.uid).get();
+        if (userDoc.exists && userDoc.data().username) {
+          currentUser = userDoc.data().username;
+          currentUserDisplayName = userDoc.data().displayName || displayNameFor(user);
+          await loadFriends();
+          showApp();
+        } else {
+          // Needs to choose a username
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('main-app').style.display = 'none';
+          document.getElementById('username-screen').style.display = 'flex';
+          document.getElementById('username-input').value = '';
+          document.getElementById('username-error').textContent = '';
         }
-      } catch(e) {}
-      await loadFriends();
-      showApp();
+      } catch(e) {
+        console.error('Error loading user doc', e);
+      }
     } else {
       currentUser = null;
+      currentUserEmail = null;
+      currentUserDisplayName = null;
       document.getElementById('login-screen').style.display = 'flex';
       document.getElementById('main-app').style.display = 'none';
+      document.getElementById('username-screen').style.display = 'none';
       document.getElementById('auth-email').value = '';
       document.getElementById('auth-password').value = '';
       document.getElementById('auth-name').value = '';
@@ -672,11 +724,8 @@ function saveEntry() {
   const bSel = document.getElementById('f-b-name');
   const pB = bSel.value;
   if (!topic || !pA || !pB) { alert('Please fill in the claim and select a friend.'); return; }
-  const bEmail = bSel.selectedOptions[0] ? bSel.selectedOptions[0].dataset.email : null;
   const entry = {
     id: editId || Date.now().toString(), type: 'bet', topic, personA: pA, personB: pB,
-    personAEmail: currentUserEmail,
-    personBEmail: bEmail || (editId ? (entries.find(x=>x.id===editId)||{}).personBEmail : null) || null,
     posA: document.getElementById('f-a-pos').value.trim(),
     posB: document.getElementById('f-b-pos').value.trim(),
     stakes: document.getElementById('f-stakes').value.trim(),
@@ -748,8 +797,8 @@ function viewEntry(id) {
     ${stakes ? `<div style="margin-bottom:12px">${stakes}</div>` : ''}
     <div class="divider-label">Sides</div>
     <div class="positions">
-      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">${e.personA}</div><div class="pos-stance">${e.posA||'—'}</div></div>
-      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">${e.personB}</div><div class="pos-stance">${e.posB||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">@${e.personA}</div><div class="pos-stance">${e.posA||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">@${e.personB}</div><div class="pos-stance">${e.posB||'—'}</div></div>
     </div>
     ${notes}${settled}
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
@@ -783,8 +832,8 @@ function cardHTML(e) {
       ${stakes}${dl}
     </div>
     <div class="positions">
-      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">${e.personA}${e.personA===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posA||'—'}</div></div>
-      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">${e.personB}${e.personB===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posB||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">@${e.personA}${e.personA===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posA||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">@${e.personB}${e.personB===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posB||'—'}</div></div>
     </div>
     ${winner}
   </div>`;
