@@ -952,6 +952,11 @@ function viewEntry(id) {
     </div>
     ${notes}${settled}
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      ${e.status==='proposed' && e.personB===currentUser ? `
+        <button class="btn btn-primary btn-sm" onclick="acceptBet('${e.id}');closeSheet('view')"><i class="ti ti-check"></i> Accept</button>
+        <button class="btn btn-sm" style="color:#A32D2D" onclick="declineBet('${e.id}');closeSheet('view')"><i class="ti ti-x"></i> Decline</button>
+      ` : ''}
+      ${e.status==='proposed' && e.personA===currentUser ? `<p style="font-size:12px;color:var(--text2)">Waiting for @${e.personB} to accept</p>` : ''}
       ${e.status==='open'?`<button class="btn btn-primary btn-sm" onclick="openResolve('${e.id}')"><i class="ti ti-trophy"></i> Settle</button>`:''}
       ${e.status==='resolved'?`<button class="btn btn-sm" onclick="reopenEntry('${e.id}')"><i class="ti ti-refresh"></i> Reopen</button>`:''}
       <button class="btn btn-sm" onclick="deleteEntry('${e.id}')"><i class="ti ti-trash"></i> Delete</button>
