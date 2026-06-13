@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#111111" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Bets" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.x/dist/tabler-icons.min.css" />
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<title>Bets</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg2: #f5f5f4;
+    --bg3: #eeece9;
+    --text: #111111;
+    --text2: #6b6b68;
+    --text3: #a0a09c;
+    --border: rgba(0,0,0,0.10);
+    --border2: rgba(0,0,0,0.18);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bot: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614;
+      --bg2: #1f1f1d;
+      --bg3: #282826;
+      --text: #f0ede8;
+      --text2: #9a9892;
+      --text3: #5c5c58;
+      --border: rgba(255,255,255,0.09);
+      --border2: rgba(255,255,255,0.16);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  body { overscroll-behavior: none; }
+
+  /* Layout */
+  .app { display: flex; flex-direction: column; height: 100%; max-width: 600px; margin: 0 auto; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: calc(var(--safe-top) + 14px) 16px 14px;
+    background: var(--bg); border-bottom: 0.5px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .scroll-body { flex: 1; overflow-y: auto; padding: 16px 16px calc(var(--safe-bot) + 80px); }
+  .bottom-tabs {
+    display: flex; border-top: 0.5px solid var(--border);
+    padding-bottom: var(--safe-bot);
+    background: var(--bg); position: sticky; bottom: 0; z-index: 10;
+  }
+  .btab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 0 8px; border: none; background: none; color: var(--text3); font-size: 10px; cursor: pointer; transition: color 0.15s; }
+  .btab i { font-size: 22px; }
+  .btab.active { color: var(--text); }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--radius-sm); border: 0.5px solid var(--border2); background: none; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--text); transition: background 0.12s; }
+  .btn:active { background: var(--bg3); }
+  .btn-primary { background: var(--text); color: var(--bg); border-color: transparent; }
+  .btn-primary:active { opacity: 0.8; background: var(--text); }
+  .btn-sm { padding: 5px 12px; font-size: 13px; }
+  .btn-icon { padding: 8px; border-radius: var(--radius-sm); border: 0.5px solid var(--border); }
+  .icon-btn-new { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: var(--text); color: var(--bg); border-radius: var(--radius-sm); border: none; cursor: pointer; font-size: 20px; }
+
+  /* Cards */
+  .card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .card-title { font-size: 15px; font-weight: 500; line-height: 1.4; flex: 1; }
+  .badge { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+  .badge-open { background: #E6F1FB; color: #0C447C; }
+  .badge-settled { background: #EAF3DE; color: #27500A; }
+  .card-meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; color: var(--text2); flex-wrap: wrap; }
+  .stakes-pill { background: #FAEEDA; color: #633806; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .positions { display: flex; gap: 8px; margin-top: 10px; }
+  .position { flex: 1; background: var(--bg2); border-radius: var(--radius-sm); padding: 8px 10px; min-width: 0; }
+  .pos-label { font-size: 10px; color: var(--text3); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pos-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pos-stance { font-size: 12px; color: var(--text2); margin-top: 2px; line-height: 1.35; }
+  .winner-banner { background: #EAF3DE; border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12px; color: #27500A; margin-top: 10px; display: flex; align-items: center; gap: 6px; }
+  .card-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .deadline-soon { color: #BA7517; font-size: 11px; }
+  .deadline-past { color: #A32D2D; font-size: 11px; }
+  .deadline-ok { font-size: 11px; color: var(--text2); }
+
+  /* Leaderboard */
+  .lb { border: 0.5px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+  .lb-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 0.5px solid var(--border); }
+  .lb-head span { font-size: 13px; font-weight: 600; }
+  .lb-empty { padding: 16px; text-align: center; font-size: 13px; color: var(--text2); }
+  .lb-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 0.5px solid var(--border); }
+  .lb-row:last-child { border-bottom: none; }
+  .lb-rank { font-size: 12px; color: var(--text3); width: 18px; text-align: center; flex-shrink: 0; }
+  .lb-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+  .lb-name { font-size: 14px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-record { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .lb-w { font-size: 13px; color: #1D9E75; font-weight: 600; }
+  .lb-l { font-size: 13px; color: #A32D2D; font-weight: 600; }
+  .lb-pct { font-size: 12px; color: var(--text2); min-width: 32px; text-align: right; }
+  .lb-bar-wrap { width: 52px; height: 4px; background: var(--bg3); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+  .lb-bar { height: 100%; border-radius: 3px; background: #1D9E75; }
+
+  /* Empty */
+  .empty { text-align: center; padding: 48px 16px; color: var(--text2); }
+  .empty i { font-size: 40px; display: block; margin-bottom: 10px; color: var(--text3); }
+  .empty p { font-size: 15px; }
+
+  /* Sheet (bottom modal) */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+  .sheet-backdrop.open { opacity: 1; pointer-events: all; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 51; background: var(--bg); border-radius: 20px 20px 0 0; padding: 0 16px calc(var(--safe-bot) + 16px); max-height: 92vh; overflow-y: auto; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.32,0.72,0,1); }
+  .sheet.open { transform: translateY(0); }
+  .sheet-handle { width: 36px; height: 4px; background: var(--border2); border-radius: 2px; margin: 10px auto 16px; }
+  .sheet h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 5px; font-weight: 500; }
+  .field input, .field textarea, .field select {
+    width: 100%; padding: 11px 12px; border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border2); background: var(--bg2);
+    color: var(--text); font-size: 16px; font-family: inherit; resize: vertical;
+    -webkit-appearance: none; appearance: none;
+  }
+  .field textarea { min-height: 72px; font-size: 15px; }
+  .field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: var(--text3); background: var(--bg); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sheet-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; padding-bottom: 4px; }
+  .divider-label { font-size: 11px; color: var(--text3); letter-spacing: 0.05em; text-transform: uppercase; margin: 16px 0 6px; }
+  .resolve-q { font-size: 14px; color: var(--text2); line-height: 1.5; margin-bottom: 14px; }
+
+  /* Profile / login */
+  .login-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding: 24px; text-align:center; }
+  .login-screen .ti-coins { font-size:48px; margin-bottom:12px; color:#BA7517; }
+  .login-screen h1 { font-size:22px; margin-bottom:6px; }
+  .login-screen p { font-size:14px; color:var(--text2); margin-bottom:24px; }
+  .login-list { width:100%; max-width:320px; display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+  .login-profile { display:flex; align-items:center; gap:12px; padding:12px 14px; border:0.5px solid var(--border2); border-radius:var(--radius-sm); background:var(--bg2); cursor:pointer; text-align:left; }
+  .login-profile:active { background: var(--bg3); }
+  .login-profile .lb-avatar { width:36px; height:36px; }
+  .login-profile span { font-size:15px; font-weight:500; }
+  .login-new-row { display:flex; gap:8px; width:100%; max-width:320px; }
+  .login-new-row input { flex:1; padding:11px 12px; border-radius:var(--radius-sm); border:0.5px solid var(--border2); background:var(--bg2); color:var(--text); font-size:16px; }
+  .profile-pill { display:flex; align-items:center; gap:6px; padding:5px 10px 5px 6px; border-radius:20px; border:0.5px solid var(--border); background:var(--bg2); cursor:pointer; }
+  .profile-pill .lb-avatar { width:22px; height:22px; font-size:10px; }
+  .profile-pill span { font-size:13px; font-weight:500; }
+  .you-tag { font-size:10px; background:var(--text); color:var(--bg); padding:1px 6px; border-radius:8px; margin-left:6px; font-weight:600; }
+
+  /* Notification prompt */
+  .notif-banner { display:flex; align-items:center; gap:10px; padding:10px 12px; border:0.5px solid var(--border2); border-radius:var(--radius-sm); background:var(--bg2); margin-bottom: 12px; }
+  .notif-banner i { font-size:18px; flex-shrink:0; }
+  .notif-banner p { font-size:13px; flex:1; line-height:1.4; }
+  .notif-banner .btn { flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<div class="login-screen" id="login-screen">
+  <i class="ti ti-coins"></i>
+  <h1>Bets</h1>
+  <p id="login-sub">Sign in to continue</p>
+
+  <div class="login-list" style="max-width:320px">
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px" onclick="signInGoogle()">
+      <i class="ti ti-brand-google"></i> Continue with Google
+    </button>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;width:100%;max-width:320px;margin:14px 0;color:var(--text3);font-size:12px">
+    <div style="flex:1;height:1px;background:var(--border2)"></div>OR<div style="flex:1;height:1px;background:var(--border2)"></div>
+  </div>
+
+  <div class="login-list" style="max-width:320px">
+    <input id="auth-email" type="email" placeholder="Email" autocomplete="email" style="width:100%;padding:11px 12px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:16px" />
+    <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 12px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:16px" />
+    <input id="auth-name" type="text" placeholder="Your name (for sign up)" autocomplete="name" style="width:100%;padding:11px 12px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:16px" />
+  </div>
+  <p id="auth-error" style="color:#A32D2D;font-size:12px;margin-top:6px;min-height:16px"></p>
+  <div style="display:flex;gap:8px;width:100%;max-width:320px;margin-top:6px">
+    <button class="btn" style="flex:1" onclick="signInEmail()">Sign in</button>
+    <button class="btn btn-primary" style="flex:1" onclick="signUpEmail()">Sign up</button>
+  </div>
+</div>
+
+<div class="app" id="main-app" style="display:none">
+  <div class="topbar">
+    <h1>Bets</h1>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="profile-pill" id="profile-pill" onclick="signOutUser()"></div>
+      <button class="icon-btn-new" onclick="openNew()" aria-label="New bet">
+        <i class="ti ti-plus"></i>
+      </button>
+    </div>
+  </div>
+
+  <div class="scroll-body" id="scroll-body">
+    <div id="notif-banner-slot"></div>
+    <div id="bets-view">
+      <div class="lb" id="leaderboard"></div>
+      <div id="list"></div>
+    </div>
+    <div id="friends-view" style="display:none">
+      <div class="field">
+        <label>Add a friend by email</label>
+        <div style="display:flex;gap:8px">
+          <input id="friend-email" type="email" placeholder="friend@example.com" style="flex:1" autocomplete="off" />
+          <button class="btn btn-primary btn-sm" onclick="addFriend()"><i class="ti ti-plus"></i></button>
+        </div>
+        <p id="friend-error" style="color:#A32D2D;font-size:12px;margin-top:6px;min-height:16px"></p>
+      </div>
+      <div class="divider-label">Your friends</div>
+      <div class="login-list" id="friends-list" style="max-width:100%"></div>
+    </div>
+  </div>
+
+  <nav class="bottom-tabs">
+    <button class="btab active" onclick="setTab('all',this)" id="tab-all">
+      <i class="ti ti-layout-list"></i>All
+    </button>
+    <button class="btab" onclick="setTab('open',this)" id="tab-open">
+      <i class="ti ti-clock"></i>Open
+    </button>
+    <button class="btab" onclick="setTab('resolved',this)" id="tab-settled">
+      <i class="ti ti-trophy"></i>Settled
+    </button>
+    <button class="btab" onclick="setTab('mine',this)" id="tab-mine">
+      <i class="ti ti-user"></i>Mine
+    </button>
+    <button class="btab" onclick="setTab('friends',this)" id="tab-friends">
+      <i class="ti ti-users"></i>Friends
+    </button>
+  </nav>
+</div>
+
+
+<!-- New / Edit Sheet -->
+<div class="sheet-backdrop" id="bd-new" onclick="closeSheet('new')"></div>
+<div class="sheet" id="sheet-new">
+  <div class="sheet-handle"></div>
+  <h2 id="sheet-new-title">New bet</h2>
+  <div class="field">
+    <label>Claim / topic</label>
+    <textarea id="f-topic" placeholder="E.g. Arsenal will win the league by 2027" rows="2"></textarea>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Person A</label><input id="f-a-name" placeholder="Name" autocomplete="off" readonly style="opacity:0.7" /></div>
+    <div class="field">
+      <label>Person B</label>
+      <select id="f-b-name"><option value="">Select a friend...</option></select>
+    </div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>A's side</label><input id="f-a-pos" placeholder="Yes, for sure" /></div>
+    <div class="field"><label>B's side</label><input id="f-b-pos" placeholder="No chance" /></div>
+  </div>
+  <div class="field"><label>Stakes / wager</label><input id="f-stakes" placeholder="Loser buys dinner" /></div>
+  <div class="row2">
+    <div class="field"><label>Date made</label><input id="f-date" type="date" /></div>
+    <div class="field"><label>Deadline (optional)</label><input id="f-deadline" type="date" /></div>
+  </div>
+  <div class="field"><label>Notes (optional)</label><textarea id="f-notes" placeholder="Context, conditions..." rows="2"></textarea></div>
+  <div class="sheet-actions">
+    <button class="btn" onclick="closeSheet('new')">Cancel</button>
+    <button class="btn btn-primary" onclick="saveEntry()">Save bet</button>
+  </div>
+</div>
+
+<!-- Settle Sheet -->
+<div class="sheet-backdrop" id="bd-resolve" onclick="closeSheet('resolve')"></div>
+<div class="sheet" id="sheet-resolve">
+  <div class="sheet-handle"></div>
+  <h2>Settle bet</h2>
+  <p class="resolve-q" id="resolve-topic"></p>
+  <div class="field"><label>Who won?</label><select id="r-winner"></select></div>
+  <div class="field"><label>What happened?</label><textarea id="r-note" placeholder="Proof or outcome..." rows="2"></textarea></div>
+  <div class="field"><label>Settlement date</label><input id="r-date" type="date" /></div>
+  <div class="sheet-actions">
+    <button class="btn" onclick="closeSheet('resolve')">Cancel</button>
+    <button class="btn btn-primary" onclick="confirmResolve()">Confirm</button>
+  </div>
+</div>
+
+<!-- Detail Sheet -->
+<div class="sheet-backdrop" id="bd-view" onclick="closeSheet('view')"></div>
+<div class="sheet" id="sheet-view">
+  <div class="sheet-handle"></div>
+  <div id="sheet-view-content"></div>
+</div>
+
+<script>
+let entries = [];
+let currentUser = null;
+let currentTab = 'all';
+let resolveId = null;
+let editId = null;
+
+// ---------- Firebase ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyA8ZRCAZl0HfJmb4xvJhzV9oVt1EqUxdv0",
+  authDomain: "bets-with-friends-856a3.firebaseapp.com",
+  projectId: "bets-with-friends-856a3",
+  storageBucket: "bets-with-friends-856a3.firebasestorage.app",
+  messagingSenderId: "21214976970",
+  appId: "1:21214976970:web:5051337a59e85c4ae94d33",
+  measurementId: "G-D94VZ93B29"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+const betsCol = db.collection('bets');
+const profilesDoc = db.collection('meta').doc('profiles');
+const friendsCol = db.collection('friends');
+let currentUserEmail = null;
+let friends = [];
+const VAPID_KEY = "BNkn43aKxGZ0080wMiRSNP4oaWMpXhkRlZC_7tc1esK3w_0ZOFKgCGJy0_6Tyjhbf8ovUp1gVX1t1I9-hCf8XH8";
+let messaging = null;
+try { messaging = firebase.messaging(); } catch(e) { console.warn('Messaging not supported', e); }
+
+const PALETTES = [
+  ['#E6F1FB','#0C447C'],['#EAF3DE','#27500A'],['#EEEDFE','#3C3489'],
+  ['#FAEEDA','#633806'],['#FAECE7','#712B13'],['#FBEAF0','#72243E'],
+  ['#E1F5EE','#085041'],['#F1EFE8','#444441'],
+];
+function avatarColor(n) { let h=0; for(let i=0;i<n.length;i++) h=(h*31+n.charCodeAt(i))&0xffff; return PALETTES[h%PALETTES.length]; }
+function initials(n) { return n.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2); }
+
+// ---------- Auth ----------
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+function authErrMsg(e) {
+  const map = {
+    'auth/invalid-email': 'Invalid email address.',
+    'auth/missing-password': 'Please enter a password.',
+    'auth/weak-password': 'Password should be at least 6 characters.',
+    'auth/email-already-in-use': 'An account with this email already exists. Try signing in.',
+    'auth/invalid-credential': 'Incorrect email or password.',
+    'auth/wrong-password': 'Incorrect email or password.',
+    'auth/user-not-found': 'No account found with this email. Try signing up.',
+    'auth/popup-closed-by-user': '',
+  };
+  return map[e.code] || e.message || 'Something went wrong.';
+}
+function showAuthError(msg) { document.getElementById('auth-error').textContent = msg; }
+
+function signInGoogle() {
+  showAuthError('');
+  auth.signInWithPopup(googleProvider).catch(e => showAuthError(authErrMsg(e)));
+}
+
+function signInEmail() {
+  showAuthError('');
+  const email = document.getElementById('auth-email').value.trim();
+  const pass = document.getElementById('auth-password').value;
+  if (!email || !pass) { showAuthError('Enter email and password.'); return; }
+  auth.signInWithEmailAndPassword(email, pass).catch(e => showAuthError(authErrMsg(e)));
+}
+
+async function signUpEmail() {
+  showAuthError('');
+  const email = document.getElementById('auth-email').value.trim();
+  const pass = document.getElementById('auth-password').value;
+  const name = document.getElementById('auth-name').value.trim();
+  if (!email || !pass) { showAuthError('Enter email and password.'); return; }
+  if (!name) { showAuthError('Please enter your name.'); return; }
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, pass);
+    await cred.user.updateProfile({ displayName: name });
+  } catch(e) { showAuthError(authErrMsg(e)); }
+}
+
+function signOutUser() {
+  if (!confirm('Sign out?')) return;
+  auth.signOut();
+}
+
+function displayNameFor(user) {
+  return user.displayName || user.email || 'User';
+}
+
+function renderProfilePill() {
+  const pill = document.getElementById('profile-pill');
+  if (!currentUser) { pill.innerHTML = ''; return; }
+  const [bg,fg] = avatarColor(currentUser);
+  pill.innerHTML = `<div class="lb-avatar" style="background:${bg};color:${fg}">${initials(currentUser)}</div><span>${currentUser}</span>`;
+}
+
+// ---------- Friends ----------
+async function loadFriends() {
+  if (!currentUserEmail) { friends = []; return; }
+  try {
+    const doc = await friendsCol.doc(currentUserEmail).get();
+    friends = (doc.exists && doc.data().list) || [];
+  } catch(e) { friends = []; }
+}
+async function saveFriends() {
+  if (!currentUserEmail) return;
+  try { await friendsCol.doc(currentUserEmail).set({ list: friends }); } catch(e) {}
+}
+
+function renderFriendsList() {
+  const el = document.getElementById('friends-list');
+  if (!friends.length) {
+    el.innerHTML = `<p style="font-size:13px;color:var(--text2)">No friends added yet. Add one by email above — they'll appear once they've signed in at least once.</p>`;
+    return;
+  }
+  el.innerHTML = friends.map((f,i) => {
+    const [bg,fg] = avatarColor(f.name);
+    return `<div class="login-profile" style="cursor:default;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(f.name)}</div>
+        <div style="min-width:0">
+          <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>
+          <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.email}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        <button class="btn-icon" onclick="newBetWithFriend(${i})" aria-label="New bet"><i class="ti ti-coins"></i></button>
+        <button class="btn-icon" onclick="removeFriend(${i})" aria-label="Remove"><i class="ti ti-x"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addFriend() {
+  const input = document.getElementById('friend-email');
+  const email = input.value.trim().toLowerCase();
+  const errEl = document.getElementById('friend-error');
+  errEl.textContent = '';
+  if (!email) return;
+  if (email === currentUserEmail.toLowerCase()) { errEl.textContent = "That's your own email."; return; }
+  if (friends.some(f => f.email.toLowerCase() === email)) { errEl.textContent = 'Already in your friends list.'; return; }
+
+  // Try to find their display name from past bets / profiles
+  let name = email;
+  const match = entries.find(e =>
+    (e.personAEmail && e.personAEmail.toLowerCase() === email) ||
+    (e.personBEmail && e.personBEmail.toLowerCase() === email)
+  );
+  if (match) {
+    name = (match.personAEmail && match.personAEmail.toLowerCase() === email) ? match.personA : match.personB;
+  }
+
+  friends.push({ name, email });
+  await saveFriends();
+  input.value = '';
+  renderFriendsList();
+  populateFriendDropdown();
+}
+
+async function removeFriend(idx) {
+  friends.splice(idx, 1);
+  await saveFriends();
+  renderFriendsList();
+  populateFriendDropdown();
+}
+
+function newBetWithFriend(idx) {
+  const f = friends[idx];
+  if (!f) return;
+  openNew();
+  populateFriendDropdown();
+  document.getElementById('f-b-name').value = f.name;
+}
+
+function populateFriendDropdown() {
+  const sel = document.getElementById('f-b-name');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select a friend...</option>' +
+    friends.map(f => `<option value="${f.name.replace(/"/g,'&quot;')}" data-email="${f.email}">${f.name}</option>`).join('');
+  if (friends.some(f => f.name === current)) sel.value = current;
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  renderProfilePill();
+  populateFriendDropdown();
+  render();
+  renderNotifBanner();
+}
+
+// ---------- Notifications ----------
+function renderNotifBanner() {
+  const slot = document.getElementById('notif-banner-slot');
+  if (!messaging || typeof Notification === 'undefined') { slot.innerHTML = ''; return; }
+  if (Notification.permission === 'granted') {
+    registerToken();
+    slot.innerHTML = '';
+    return;
+  }
+  if (Notification.permission === 'denied') { slot.innerHTML = ''; return; }
+  slot.innerHTML = `<div class="notif-banner">
+    <i class="ti ti-bell"></i>
+    <p>Get notified when new bets are made or settled.</p>
+    <button class="btn btn-sm btn-primary" onclick="enableNotifications()">Enable</button>
+  </div>`;
+}
+
+async function enableNotifications() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm === 'granted') {
+      await registerToken();
+    }
+  } catch(e) { console.error('Notification permission error', e); }
+  renderNotifBanner();
+}
+
+async function registerToken() {
+  if (!messaging || !currentUser) return;
+  try {
+    const reg = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (token) {
+      await db.collection('deviceTokens').doc(token).set({ user: currentUser, token, updated: Date.now() });
+    }
+  } catch(e) { console.error('Token registration error', e); }
+}
+
+// ---------- Bets data ----------
+let unsubscribeBets = null;
+
+function startBetsListener() {
+  if (unsubscribeBets) return;
+  unsubscribeBets = betsCol.onSnapshot(snap => {
+    entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, err => console.error('Firestore listen error', err));
+}
+
+async function saveEntryToDb(entry) {
+  const { id, ...data } = entry;
+  try { await betsCol.doc(id).set(data); } catch(e) { console.error('save error', e); }
+}
+async function deleteEntryFromDb(id) {
+  try { await betsCol.doc(id).delete(); } catch(e) { console.error('delete error', e); }
+}
+async function updateEntryInDb(id, fields) {
+  try { await betsCol.doc(id).update(fields); } catch(e) { console.error('update error', e); }
+}
+
+async function load() {
+  auth.onAuthStateChanged(async (user) => {
+    if (user) {
+      currentUser = displayNameFor(user);
+      currentUserEmail = user.email;
+      // Keep a registry of users for the leaderboard / lookups (optional, best-effort)
+      try {
+        const profilesSnap = await profilesDoc.get();
+        const names = (profilesSnap.exists && profilesSnap.data().names) || [];
+        if (!names.includes(currentUser)) {
+          names.push(currentUser);
+          await profilesDoc.set({ names });
+        }
+      } catch(e) {}
+      await loadFriends();
+      showApp();
+    } else {
+      currentUser = null;
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('main-app').style.display = 'none';
+      document.getElementById('auth-email').value = '';
+      document.getElementById('auth-password').value = '';
+      document.getElementById('auth-name').value = '';
+      showAuthError('');
+    }
+  });
+  startBetsListener();
+}
+function save() { try { localStorage.setItem('bets_pwa_v1', JSON.stringify(entries)); } catch(e) {} }
+
+function setTab(t, el) {
+  currentTab = t;
+  document.querySelectorAll('.btab').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
+
+function openSheet(name) {
+  document.getElementById('bd-'+name).classList.add('open');
+  document.getElementById('sheet-'+name).classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSheet(name) {
+  document.getElementById('bd-'+name).classList.remove('open');
+  document.getElementById('sheet-'+name).classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function openNew() {
+  editId = null;
+  document.getElementById('sheet-new-title').textContent = 'New bet';
+  ['f-topic','f-a-pos','f-b-pos','f-stakes','f-notes','f-deadline'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  if (currentUser) document.getElementById('f-a-name').value = currentUser;
+  populateFriendDropdown();
+  document.getElementById('f-b-name').value = '';
+  openSheet('new');
+}
+
+function saveEntry() {
+  const topic = document.getElementById('f-topic').value.trim();
+  const pA = document.getElementById('f-a-name').value.trim();
+  const bSel = document.getElementById('f-b-name');
+  const pB = bSel.value;
+  if (!topic || !pA || !pB) { alert('Please fill in the claim and select a friend.'); return; }
+  const bEmail = bSel.selectedOptions[0] ? bSel.selectedOptions[0].dataset.email : null;
+  const entry = {
+    id: editId || Date.now().toString(), type: 'bet', topic, personA: pA, personB: pB,
+    personAEmail: currentUserEmail,
+    personBEmail: bEmail || (editId ? (entries.find(x=>x.id===editId)||{}).personBEmail : null) || null,
+    posA: document.getElementById('f-a-pos').value.trim(),
+    posB: document.getElementById('f-b-pos').value.trim(),
+    stakes: document.getElementById('f-stakes').value.trim(),
+    notes: document.getElementById('f-notes').value.trim(),
+    created: document.getElementById('f-date').value || new Date().toISOString().split('T')[0],
+    deadline: document.getElementById('f-deadline').value || null,
+    status: 'open', winner: null, resolveNote: null, resolvedDate: null,
+    createdBy: editId ? (entries.find(x=>x.id===editId)||{}).createdBy || currentUser : currentUser,
+  };
+  if (editId) {
+    const old = entries.find(x => x.id === editId);
+    if (old) { entry.status=old.status; entry.winner=old.winner; entry.resolveNote=old.resolveNote; entry.resolvedDate=old.resolvedDate; }
+  }
+  saveEntryToDb(entry);
+  closeSheet('new');
+}
+
+function openResolve(id) {
+  resolveId = id;
+  const e = entries.find(x => x.id === id);
+  document.getElementById('resolve-topic').textContent = e.topic;
+  const sel = document.getElementById('r-winner');
+  sel.innerHTML = `<option value="${e.personA}">${e.personA}</option><option value="${e.personB}">${e.personB}</option><option value="draw">Draw / no winner</option>`;
+  document.getElementById('r-note').value = '';
+  document.getElementById('r-date').value = new Date().toISOString().split('T')[0];
+  closeSheet('view');
+  setTimeout(() => openSheet('resolve'), 50);
+}
+
+function confirmResolve() {
+  const e = entries.find(x => x.id === resolveId);
+  if (!e) return;
+  const fields = {
+    status: 'resolved',
+    winner: document.getElementById('r-winner').value,
+    resolveNote: document.getElementById('r-note').value.trim(),
+    resolvedDate: document.getElementById('r-date').value,
+    resolvedBy: currentUser,
+  };
+  updateEntryInDb(e.id, fields);
+  closeSheet('resolve');
+}
+
+function reopenEntry(id) {
+  updateEntryInDb(id, { status:'open', winner:null, resolveNote:null, resolvedDate:null });
+  closeSheet('view');
+}
+
+function deleteEntry(id) {
+  if (!confirm('Delete this bet?')) return;
+  deleteEntryFromDb(id);
+  closeSheet('view');
+}
+
+function viewEntry(id) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  const settled = e.status === 'resolved' ? `
+    <div class="divider-label">Settlement</div>
+    <div class="winner-banner"><i class="ti ti-trophy"></i> ${e.winner==='draw'?'Draw':e.winner+' won'}${e.resolveNote?' — '+e.resolveNote:''}</div>
+    ${e.resolvedDate?`<p style="font-size:12px;color:var(--text2);margin-top:6px">Settled ${new Date(e.resolvedDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</p>`:''}
+  ` : '';
+  const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
+  const notes = e.notes ? `<div class="divider-label">Notes</div><p style="font-size:14px;line-height:1.6;color:var(--text2)">${e.notes}</p>` : '';
+  const dl = e.deadline ? ` · Due ${new Date(e.deadline+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : '';
+  document.getElementById('sheet-view-content').innerHTML = `
+    <h2 style="font-size:17px;margin-bottom:6px;line-height:1.4">${e.topic}</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Made ${new Date(e.created+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}${dl}</p>
+    ${stakes ? `<div style="margin-bottom:12px">${stakes}</div>` : ''}
+    <div class="divider-label">Sides</div>
+    <div class="positions">
+      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">${e.personA}</div><div class="pos-stance">${e.posA||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">${e.personB}</div><div class="pos-stance">${e.posB||'—'}</div></div>
+    </div>
+    ${notes}${settled}
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      ${e.status==='open'?`<button class="btn btn-primary btn-sm" onclick="openResolve('${e.id}')"><i class="ti ti-trophy"></i> Settle</button>`:''}
+      ${e.status==='resolved'?`<button class="btn btn-sm" onclick="reopenEntry('${e.id}')"><i class="ti ti-refresh"></i> Reopen</button>`:''}
+      <button class="btn btn-sm" onclick="deleteEntry('${e.id}')"><i class="ti ti-trash"></i> Delete</button>
+    </div>
+    <div style="height:8px"></div>
+  `;
+  openSheet('view');
+}
+
+function deadlineLabel(dl) {
+  if (!dl) return '';
+  const d = new Date(dl+'T00:00:00');
+  const diff = Math.ceil((d - new Date()) / 86400000);
+  if (diff < 0) return `<span class="deadline-past"><i class="ti ti-alert-circle"></i> Overdue ${Math.abs(diff)}d</span>`;
+  if (diff <= 30) return `<span class="deadline-soon"><i class="ti ti-clock"></i> ${diff}d left</span>`;
+  return `<span class="deadline-ok"><i class="ti ti-calendar"></i> ${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>`;
+}
+
+function cardHTML(e) {
+  const sb = e.status==='open' ? `<span class="badge badge-open">Open</span>` : `<span class="badge badge-settled"><i class="ti ti-check"></i> Settled</span>`;
+  const winner = e.winner ? `<div class="winner-banner"><i class="ti ti-trophy"></i> ${e.winner==='draw'?'Draw':e.winner+' won'}${e.resolveNote?' — '+e.resolveNote:''}</div>` : '';
+  const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
+  const dl = e.status==='open' ? deadlineLabel(e.deadline) : '';
+  return `<div class="card" onclick="viewEntry('${e.id}')">
+    <div class="card-head"><div class="card-title">${e.topic}</div>${sb}</div>
+    <div class="card-meta">
+      <span style="font-size:11px;color:var(--text2)">${new Date(e.created+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>
+      ${stakes}${dl}
+    </div>
+    <div class="positions">
+      <div class="position"><div class="pos-label">Person A</div><div class="pos-name">${e.personA}${e.personA===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posA||'—'}</div></div>
+      <div class="position"><div class="pos-label">Person B</div><div class="pos-name">${e.personB}${e.personB===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posB||'—'}</div></div>
+    </div>
+    ${winner}
+  </div>`;
+}
+
+function renderLeaderboard() {
+  const rec = {};
+  entries.filter(e => e.status==='resolved' && e.winner && e.winner!=='draw').forEach(e => {
+    [e.personA,e.personB].forEach(p => { if(!rec[p]) rec[p]={w:0,l:0}; });
+    rec[e.winner].w++;
+    const loser = e.winner===e.personA ? e.personB : e.personA;
+    if(rec[loser]) rec[loser].l++;
+  });
+  entries.forEach(e => { [e.personA,e.personB].forEach(p => { if(!rec[p]) rec[p]={w:0,l:0}; }); });
+  const players = Object.entries(rec).map(([name,r]) => {
+    const total=r.w+r.l; const pct=total>0?Math.round(r.w/total*100):null;
+    return {name,w:r.w,l:r.l,total,pct};
+  }).sort((a,b)=>b.w-a.w||a.l-b.l);
+
+  const lb = document.getElementById('leaderboard');
+  if (!players.length) {
+    lb.innerHTML = `<div class="lb-head"><span><i class="ti ti-trophy" style="margin-right:6px"></i>Records</span></div><div class="lb-empty">Records appear after bets are added.</div>`;
+    return;
+  }
+  const rows = players.map((p,i) => {
+    const [bg,fg] = avatarColor(p.name);
+    const rank = i===0 ? `<i class="ti ti-trophy" style="color:#BA7517;font-size:14px"></i>` : (i+1);
+    const barW = p.pct!==null?p.pct:0;
+    const pctLabel = p.pct!==null?p.pct+'%':'—';
+    return `<div class="lb-row">
+      <div class="lb-rank">${rank}</div>
+      <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(p.name)}</div>
+      <div class="lb-name">${p.name}</div>
+      <div class="lb-record"><span class="lb-w">${p.w}W</span><span style="color:var(--text3);font-size:11px">·</span><span class="lb-l">${p.l}L</span></div>
+      <div class="lb-bar-wrap"><div class="lb-bar" style="width:${barW}%"></div></div>
+      <div class="lb-pct">${pctLabel}</div>
+    </div>`;
+  }).join('');
+  lb.innerHTML = `<div class="lb-head"><span><i class="ti ti-trophy" style="margin-right:6px"></i>Records</span><span style="font-size:12px;color:var(--text2)">${players.length} player${players.length!==1?'s':''}</span></div>${rows}`;
+}
+
+function render() {
+  const betsView = document.getElementById('bets-view');
+  const friendsView = document.getElementById('friends-view');
+  if (currentTab === 'friends') {
+    betsView.style.display = 'none';
+    friendsView.style.display = 'block';
+    document.getElementById('friend-email').value = '';
+    document.getElementById('friend-error').textContent = '';
+    renderFriendsList();
+    return;
+  }
+  betsView.style.display = 'block';
+  friendsView.style.display = 'none';
+
+  renderLeaderboard();
+  let list = [...entries];
+  if (currentTab==='open') list=list.filter(e=>e.status==='open');
+  else if (currentTab==='resolved') list=list.filter(e=>e.status==='resolved');
+  else if (currentTab==='mine') list=list.filter(e=>e.personA===currentUser || e.personB===currentUser);
+  list.sort((a,b)=>new Date(b.created)-new Date(a.created));
+  const el = document.getElementById('list');
+  if (!list.length) {
+    el.innerHTML = `<div class="empty"><i class="ti ti-coins"></i><p>${currentTab==='all'?'No bets yet — add your first one!':currentTab==='open'?'No open bets.':currentTab==='mine'?'You have no bets yet.':'No settled bets yet.'}</p></div>`;
+    return;
+  }
+  el.innerHTML = list.map(cardHTML).join('');
+}
+
+// Register service worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+
+load();
+</script>
+</body>
+</html>
