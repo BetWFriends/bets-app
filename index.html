@@ -81,6 +81,7 @@
   .badge { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
   .badge-open { background: #E6F1FB; color: #0C447C; }
   .badge-settled { background: #EAF3DE; color: #27500A; }
+  .badge-proposed { background: #FAEEDA; color: #633806; }
   .card-meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; color: var(--text2); flex-wrap: wrap; }
   .stakes-pill { background: #FAEEDA; color: #633806; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
   .positions { display: flex; gap: 8px; margin-top: 10px; }
@@ -216,6 +217,10 @@
   <div class="scroll-body" id="scroll-body">
     <div id="notif-banner-slot"></div>
     <div id="bets-view">
+      <div id="pending-section" style="display:none">
+        <div class="divider-label" style="margin-top:0">Pending approval</div>
+        <div id="pending-list"></div>
+      </div>
       <div class="lb" id="leaderboard"></div>
       <div id="list"></div>
     </div>
@@ -259,9 +264,6 @@
     </button>
     <button class="btab" onclick="setTab('resolved',this)" id="tab-settled">
       <i class="ti ti-trophy"></i>Settled
-    </button>
-    <button class="btab" onclick="setTab('mine',this)" id="tab-mine">
-      <i class="ti ti-user"></i>Mine
     </button>
     <button class="btab" onclick="setTab('friends',this)" id="tab-friends" style="position:relative">
       <i class="ti ti-users"></i>Friends
@@ -880,7 +882,7 @@ function saveEntry() {
     notes: document.getElementById('f-notes').value.trim(),
     created: document.getElementById('f-date').value || new Date().toISOString().split('T')[0],
     deadline: document.getElementById('f-deadline').value || null,
-    status: 'open', winner: null, resolveNote: null, resolvedDate: null,
+    status: 'proposed', winner: null, resolveNote: null, resolvedDate: null,
     createdBy: editId ? (entries.find(x=>x.id===editId)||{}).createdBy || currentUser : currentUser,
   };
   if (editId) {
@@ -969,7 +971,11 @@ function deadlineLabel(dl) {
 }
 
 function cardHTML(e) {
-  const sb = e.status==='open' ? `<span class="badge badge-open">Open</span>` : `<span class="badge badge-settled"><i class="ti ti-check"></i> Settled</span>`;
+  const sb = e.status==='open'
+    ? `<span class="badge badge-open">Open</span>`
+    : e.status==='proposed'
+    ? `<span class="badge badge-proposed"><i class="ti ti-clock"></i> Pending</span>`
+    : `<span class="badge badge-settled"><i class="ti ti-check"></i> Settled</span>`;
   const winner = e.winner ? `<div class="winner-banner"><i class="ti ti-trophy"></i> ${e.winner==='draw'?'Draw':e.winner+' won'}${e.resolveNote?' — '+e.resolveNote:''}</div>` : '';
   const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
   const dl = e.status==='open' ? deadlineLabel(e.deadline) : '';
@@ -1023,6 +1029,50 @@ function renderLeaderboard() {
   lb.innerHTML = `<div class="lb-head"><span><i class="ti ti-trophy" style="margin-right:6px"></i>Records</span><span style="font-size:12px;color:var(--text2)">${players.length} player${players.length!==1?'s':''}</span></div>${rows}`;
 }
 
+function acceptBet(id) {
+  updateEntryInDb(id, { status: 'open' });
+}
+
+function declineBet(id) {
+  updateEntryInDb(id, { status: 'declined' });
+}
+
+function renderPendingSection() {
+  const proposed = entries.filter(e =>
+    e.status === 'proposed' &&
+    (e.personA === currentUser || e.personB === currentUser)
+  );
+  const section = document.getElementById('pending-section');
+  const list = document.getElementById('pending-list');
+  if (!proposed.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  list.innerHTML = proposed.map(e => {
+    const isProposer = e.personA === currentUser;
+    const actions = isProposer
+      ? `<p style="font-size:12px;color:var(--text2);margin-top:10px">Waiting for @${e.personB} to accept</p>`
+      : `<div class="card-actions">
+          <button class="btn btn-sm btn-primary" onclick="acceptBet('${e.id}');event.stopPropagation()"><i class="ti ti-check"></i> Accept</button>
+          <button class="btn btn-sm" style="color:#A32D2D" onclick="declineBet('${e.id}');event.stopPropagation()"><i class="ti ti-x"></i> Decline</button>
+         </div>`;
+    const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
+    return `<div class="card" onclick="viewEntry('${e.id}')">
+      <div class="card-head">
+        <div class="card-title">${e.topic}</div>
+        <span class="badge badge-proposed"><i class="ti ti-clock"></i> Pending</span>
+      </div>
+      <div class="card-meta">
+        <span style="font-size:11px;color:var(--text2)">Proposed by @${e.personA}</span>
+        ${stakes}
+      </div>
+      <div class="positions">
+        <div class="position"><div class="pos-label">Person A</div><div class="pos-name">@${e.personA}${e.personA===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posA||'—'}</div></div>
+        <div class="position"><div class="pos-label">Person B</div><div class="pos-name">@${e.personB}${e.personB===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posB||'—'}</div></div>
+      </div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
 function render() {
   const betsView = document.getElementById('bets-view');
   const friendsView = document.getElementById('friends-view');
@@ -1037,15 +1087,16 @@ function render() {
   betsView.style.display = 'block';
   friendsView.style.display = 'none';
 
+  renderPendingSection();
   renderLeaderboard();
-  let list = [...entries];
+  let list = [...entries].filter(e => e.status !== 'proposed' && e.status !== 'declined');
+  list = list.filter(e => e.personA === currentUser || e.personB === currentUser);
   if (currentTab==='open') list=list.filter(e=>e.status==='open');
   else if (currentTab==='resolved') list=list.filter(e=>e.status==='resolved');
-  else if (currentTab==='mine') list=list.filter(e=>e.personA===currentUser || e.personB===currentUser);
   list.sort((a,b)=>new Date(b.created)-new Date(a.created));
   const el = document.getElementById('list');
   if (!list.length) {
-    el.innerHTML = `<div class="empty"><i class="ti ti-coins"></i><p>${currentTab==='all'?'No bets yet — add your first one!':currentTab==='open'?'No open bets.':currentTab==='mine'?'You have no bets yet.':'No settled bets yet.'}</p></div>`;
+    el.innerHTML = `<div class="empty"><i class="ti ti-coins"></i><p>${currentTab==='open'?'No open bets.':currentTab==='resolved'?'No settled bets yet.':'No bets yet — add your first one!'}</p></div>`;
     return;
   }
   el.innerHTML = list.map(cardHTML).join('');
