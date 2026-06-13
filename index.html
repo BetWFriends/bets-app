@@ -248,6 +248,14 @@
       <div class="login-list" id="friends-list" style="max-width:100%"></div>
 
       <div class="divider-label">Account</div>
+      <div style="margin-bottom:12px">
+        <p style="font-size:13px;color:var(--text2);margin-bottom:6px">Current username: <strong id="current-username-display"></strong></p>
+        <div style="display:flex;gap:8px">
+          <input id="new-username-input" type="text" placeholder="New username" autocomplete="off" style="flex:1;padding:10px 12px;border-radius:var(--radius-sm);border:0.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:15px" />
+          <button class="btn btn-sm btn-primary" onclick="changeUsername()">Change</button>
+        </div>
+        <p id="change-username-error" style="font-size:12px;margin-top:5px;min-height:16px"></p>
+      </div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <button class="btn" onclick="signOutUser()"><i class="ti ti-logout"></i> Sign out</button>
         <button class="btn" style="color:#A32D2D;border-color:#A32D2D" onclick="deleteMyAccount()"><i class="ti ti-trash"></i> Delete my account</button>
@@ -506,6 +514,70 @@ async function claimUsername() {
   }
 }
 
+async function changeUsername() {
+  const errEl = document.getElementById('change-username-error');
+  errEl.textContent = '';
+  errEl.style.color = '#A32D2D';
+  const raw = document.getElementById('new-username-input').value.trim();
+  if (!USERNAME_RE.test(raw)) {
+    errEl.textContent = '3-20 characters: letters, numbers, underscores only.';
+    return;
+  }
+  const newKey = raw.toLowerCase();
+  if (newKey === currentUser.toLowerCase()) {
+    errEl.textContent = "That's already your username.";
+    return;
+  }
+  const user = auth.currentUser;
+  if (!user) return;
+  try {
+    const existing = await usernamesCol.doc(newKey).get();
+    if (existing.exists) {
+      errEl.textContent = 'That username is taken. Try another.';
+      return;
+    }
+    const oldKey = currentUser.toLowerCase();
+    const displayName = currentUserDisplayName || currentUser;
+    // Reserve new username
+    await usernamesCol.doc(newKey).set({ uid: user.uid, displayName });
+    // Update user record
+    await usersCol.doc(user.uid).set({ username: newKey, displayName, email: user.email || null });
+    // Free old username
+    try { await usernamesCol.doc(oldKey).delete(); } catch(e) {}
+    // Update friends lists that reference old username
+    try {
+      const allFriends = await friendsCol.get();
+      const updates = [];
+      allFriends.forEach(doc => {
+        const list = (doc.data().list) || [];
+        if (list.some(f => f.username === oldKey)) {
+          const newList = list.map(f => f.username === oldKey ? { ...f, username: newKey } : f);
+          updates.push(doc.ref.set({ list: newList }));
+        }
+      });
+      await Promise.all(updates);
+    } catch(e) {}
+    // Update own friends list key
+    try {
+      const myFriends = await friendsCol.doc(oldKey).get();
+      if (myFriends.exists) {
+        await friendsCol.doc(newKey).set(myFriends.data());
+        await friendsCol.doc(oldKey).delete();
+      }
+    } catch(e) {}
+    currentUser = newKey;
+    document.getElementById('new-username-input').value = '';
+    errEl.style.color = '#27500A';
+    errEl.textContent = 'Username changed to @' + newKey;
+    renderProfilePill();
+    renderFriendsView();
+    populateFriendDropdown();
+  } catch(e) {
+    errEl.textContent = 'Something went wrong. Try again.';
+    console.error(e);
+  }
+}
+
 function renderProfilePill() {
   const pill = document.getElementById('profile-pill');
   if (!currentUser) { pill.innerHTML = ''; return; }
@@ -642,6 +714,9 @@ function renderRequestLists() {
 }
 
 function renderFriendsView() {
+  const el = document.getElementById('current-username-display');
+  if (el) el.textContent = '@' + (currentUser || '');
+  document.getElementById('change-username-error').textContent = '';
   renderRequestLists();
   renderFriendsList();
 }
