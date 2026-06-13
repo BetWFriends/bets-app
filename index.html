@@ -195,7 +195,7 @@
   <div class="topbar">
     <h1>Bets</h1>
     <div style="display:flex;align-items:center;gap:8px">
-      <div class="profile-pill" id="profile-pill" onclick="signOutUser()"></div>
+      <div class="profile-pill" id="profile-pill"></div>
       <button class="icon-btn-new" onclick="openNew()" aria-label="New bet">
         <i class="ti ti-plus"></i>
       </button>
@@ -219,6 +219,12 @@
       </div>
       <div class="divider-label">Your friends</div>
       <div class="login-list" id="friends-list" style="max-width:100%"></div>
+
+      <div class="divider-label">Account</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn" onclick="signOutUser()"><i class="ti ti-logout"></i> Sign out</button>
+        <button class="btn" style="color:#A32D2D;border-color:#A32D2D" onclick="deleteMyAccount()"><i class="ti ti-trash"></i> Delete my account</button>
+      </div>
     </div>
   </div>
 
@@ -380,6 +386,59 @@ async function signUpEmail() {
 function signOutUser() {
   if (!confirm('Sign out?')) return;
   auth.signOut();
+}
+
+async function deleteMyAccount() {
+  if (!auth.currentUser) return;
+  const ok = confirm('Delete your account permanently? This removes your friends list and notification settings. Bets you were part of will remain but will show your old name. This cannot be undone.');
+  if (!ok) return;
+  const ok2 = confirm('Are you sure? This is permanent.');
+  if (!ok2) return;
+
+  const email = currentUserEmail;
+  const name = currentUser;
+
+  try {
+    // Remove this user's own friends list
+    if (email) {
+      try { await friendsCol.doc(email).delete(); } catch(e) {}
+    }
+    // Remove this user from other users' friends lists
+    try {
+      const allFriends = await friendsCol.get();
+      const batchPromises = [];
+      allFriends.forEach(doc => {
+        const list = (doc.data().list) || [];
+        if (list.some(f => f.email && f.email.toLowerCase() === (email||'').toLowerCase())) {
+          const newList = list.filter(f => !(f.email && f.email.toLowerCase() === (email||'').toLowerCase()));
+          batchPromises.push(doc.ref.set({ list: newList }));
+        }
+      });
+      await Promise.all(batchPromises);
+    } catch(e) {}
+    // Remove device tokens for this user
+    try {
+      const tokens = await db.collection('deviceTokens').where('user', '==', name).get();
+      await Promise.all(tokens.docs.map(d => d.ref.delete()));
+    } catch(e) {}
+    // Remove from profiles registry
+    try {
+      const profilesSnap = await profilesDoc.get();
+      const names = (profilesSnap.exists && profilesSnap.data().names) || [];
+      if (names.includes(name)) {
+        await profilesDoc.set({ names: names.filter(n => n !== name) });
+      }
+    } catch(e) {}
+
+    // Finally, delete the auth account
+    await auth.currentUser.delete();
+  } catch (e) {
+    if (e.code === 'auth/requires-recent-login') {
+      alert('For security, please sign out and sign back in, then try deleting your account again right after signing in.');
+    } else {
+      alert('Something went wrong deleting your account: ' + (e.message || e));
+    }
+  }
 }
 
 function displayNameFor(user) {
