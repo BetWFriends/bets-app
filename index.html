@@ -221,13 +221,24 @@
     </div>
     <div id="friends-view" style="display:none">
       <div class="field">
-        <label>Add a friend by email</label>
+        <label>Send a friend request</label>
         <div style="display:flex;gap:8px">
           <input id="friend-email" type="text" placeholder="username" style="flex:1" autocomplete="off" />
           <button class="btn btn-primary btn-sm" onclick="addFriend()"><i class="ti ti-plus"></i></button>
         </div>
         <p id="friend-error" style="color:#A32D2D;font-size:12px;margin-top:6px;min-height:16px"></p>
       </div>
+
+      <div id="incoming-requests-section" style="display:none">
+        <div class="divider-label">Friend requests</div>
+        <div class="login-list" id="incoming-requests-list" style="max-width:100%"></div>
+      </div>
+
+      <div id="outgoing-requests-section" style="display:none">
+        <div class="divider-label">Sent requests</div>
+        <div class="login-list" id="outgoing-requests-list" style="max-width:100%"></div>
+      </div>
+
       <div class="divider-label">Your friends</div>
       <div class="login-list" id="friends-list" style="max-width:100%"></div>
 
@@ -252,8 +263,9 @@
     <button class="btab" onclick="setTab('mine',this)" id="tab-mine">
       <i class="ti ti-user"></i>Mine
     </button>
-    <button class="btab" onclick="setTab('friends',this)" id="tab-friends">
+    <button class="btab" onclick="setTab('friends',this)" id="tab-friends" style="position:relative">
       <i class="ti ti-users"></i>Friends
+      <span id="friends-badge-dot" style="display:none;position:absolute;top:4px;right:calc(50% - 18px);width:8px;height:8px;border-radius:50%;background:#A32D2D"></span>
     </button>
   </nav>
 </div>
@@ -335,11 +347,15 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 const betsCol = db.collection('bets');
 const friendsCol = db.collection('friends');
+const friendRequestsCol = db.collection('friendRequests'); // {from, to, status: 'pending'|'accepted'|'declined', createdAt}
 const usersCol = db.collection('users');       // doc id = uid -> {username, displayName, email}
 const usernamesCol = db.collection('usernames'); // doc id = lowercase username -> {uid, displayName}
 let currentUserEmail = null;
 let currentUserDisplayName = null;
 let friends = [];
+let incomingRequests = [];
+let outgoingRequests = [];
+let unsubscribeRequests = null;
 const VAPID_KEY = "BNkn43aKxGZ0080wMiRSNP4oaWMpXhkRlZC_7tc1esK3w_0ZOFKgCGJy0_6Tyjhbf8ovUp1gVX1t1I9-hCf8XH8";
 let messaging = null;
 try { messaging = firebase.messaging(); } catch(e) { console.warn('Messaging not supported', e); }
@@ -508,6 +524,126 @@ async function saveFriends() {
   try { await friendsCol.doc(currentUser).set({ list: friends }); } catch(e) {}
 }
 
+// ---------- Friend Requests ----------
+function startRequestsListener() {
+  if (unsubscribeRequests || !currentUser) return;
+  unsubscribeRequests = friendRequestsCol
+    .where('status', '==', 'pending')
+    .onSnapshot(snap => {
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      incomingRequests = all.filter(r => r.to === currentUser);
+      outgoingRequests = all.filter(r => r.from === currentUser);
+      updateFriendsBadge();
+      if (currentTab === 'friends') renderFriendsView();
+    }, err => console.error('Friend requests listener error', err));
+}
+
+function updateFriendsBadge() {
+  const dot = document.getElementById('friends-badge-dot');
+  if (!dot) return;
+  dot.style.display = incomingRequests.length ? 'block' : 'none';
+}
+
+async function sendFriendRequest(toUsername) {
+  const errEl = document.getElementById('friend-error');
+  // Check for an existing pending request either direction
+  const dup = await friendRequestsCol
+    .where('status', '==', 'pending')
+    .get();
+  const exists = dup.docs.some(d => {
+    const r = d.data();
+    return (r.from === currentUser && r.to === toUsername) || (r.from === toUsername && r.to === currentUser);
+  });
+  if (exists) {
+    errEl.textContent = 'A request already exists with this user.';
+    return false;
+  }
+  await friendRequestsCol.add({
+    from: currentUser,
+    to: toUsername,
+    status: 'pending',
+    createdAt: Date.now(),
+  });
+  return true;
+}
+
+async function acceptRequest(reqId) {
+  const req = incomingRequests.find(r => r.id === reqId);
+  if (!req) return;
+  // Add each other as friends
+  if (!friends.some(f => f.username === req.from)) {
+    friends.push({ username: req.from, displayName: req.from });
+    await saveFriends();
+  }
+  try {
+    const otherDoc = await friendsCol.doc(req.from).get();
+    const otherList = (otherDoc.exists && otherDoc.data().list) || [];
+    if (!otherList.some(f => f.username === currentUser)) {
+      otherList.push({ username: currentUser, displayName: currentUser });
+      await friendsCol.doc(req.from).set({ list: otherList });
+    }
+  } catch(e) {}
+  await friendRequestsCol.doc(reqId).update({ status: 'accepted' });
+  renderFriendsList();
+  populateFriendDropdown();
+}
+
+async function declineRequest(reqId) {
+  await friendRequestsCol.doc(reqId).update({ status: 'declined' });
+}
+
+async function cancelRequest(reqId) {
+  await friendRequestsCol.doc(reqId).delete();
+}
+
+function renderRequestLists() {
+  const incomingSection = document.getElementById('incoming-requests-section');
+  const incomingList = document.getElementById('incoming-requests-list');
+  const outgoingSection = document.getElementById('outgoing-requests-section');
+  const outgoingList = document.getElementById('outgoing-requests-list');
+
+  if (incomingRequests.length) {
+    incomingSection.style.display = 'block';
+    incomingList.innerHTML = incomingRequests.map(r => {
+      const [bg,fg] = avatarColor(r.from);
+      return `<div class="login-profile" style="cursor:default;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0">
+          <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(r.from)}</div>
+          <div style="font-size:14px;font-weight:500">@${r.from}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <button class="btn btn-sm btn-primary" onclick="acceptRequest('${r.id}')">Accept</button>
+          <button class="btn btn-sm" onclick="declineRequest('${r.id}')">Decline</button>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    incomingSection.style.display = 'none';
+  }
+
+  if (outgoingRequests.length) {
+    outgoingSection.style.display = 'block';
+    outgoingList.innerHTML = outgoingRequests.map(r => {
+      const [bg,fg] = avatarColor(r.to);
+      return `<div class="login-profile" style="cursor:default;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0">
+          <div class="lb-avatar" style="background:${bg};color:${fg}">${initials(r.to)}</div>
+          <div style="font-size:14px;font-weight:500">@${r.to}</div>
+          <span style="font-size:11px;color:var(--text2)">Pending</span>
+        </div>
+        <button class="btn-icon" onclick="cancelRequest('${r.id}')" aria-label="Cancel"><i class="ti ti-x"></i></button>
+      </div>`;
+    }).join('');
+  } else {
+    outgoingSection.style.display = 'none';
+  }
+}
+
+function renderFriendsView() {
+  renderRequestLists();
+  renderFriendsList();
+}
+
 function renderFriendsList() {
   const el = document.getElementById('friends-list');
   if (!friends.length) {
@@ -547,11 +683,11 @@ async function addFriend() {
       errEl.textContent = 'No user found with that username.';
       return;
     }
-    friends.push({ username: key, displayName: doc.data().displayName || key });
-    await saveFriends();
-    input.value = '';
-    renderFriendsList();
-    populateFriendDropdown();
+    const sent = await sendFriendRequest(key);
+    if (sent) {
+      input.value = '';
+      errEl.textContent = '';
+    }
   } catch(e) {
     errEl.textContent = 'Something went wrong. Try again.';
     console.error(e);
@@ -586,6 +722,7 @@ function showApp() {
   document.getElementById('main-app').style.display = 'flex';
   renderProfilePill();
   populateFriendDropdown();
+  startRequestsListener();
   render();
   renderNotifBanner();
 }
@@ -883,7 +1020,7 @@ function render() {
     friendsView.style.display = 'block';
     document.getElementById('friend-email').value = '';
     document.getElementById('friend-error').textContent = '';
-    renderFriendsList();
+    renderFriendsView();
     return;
   }
   betsView.style.display = 'block';
