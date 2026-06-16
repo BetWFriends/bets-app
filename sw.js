@@ -1,4 +1,4 @@
-const CACHE = 'bets-v17';
+const CACHE = 'bets-v21';
 const ASSETS = [
   './',
   './index.html',

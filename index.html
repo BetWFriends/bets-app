@@ -82,6 +82,12 @@
   .badge-open { background: #E6F1FB; color: #0C447C; }
   .badge-settled { background: #EAF3DE; color: #27500A; }
   .badge-proposed { background: #FAEEDA; color: #633806; }
+  .badge-h2h { background: #EEEDFE; color: #3C3489; }
+  .badge-ou { background: #E1F5EE; color: #085041; }
+  .badge-multi { background: #FBEAF0; color: #72243E; }
+  .multi-outcome { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .multi-outcome input { flex:1; padding:8px 10px; border-radius:var(--radius-sm); border:0.5px solid var(--border2); background:var(--bg2); color:var(--text); font-size:15px; }
+  .multi-outcome button { flex-shrink:0; }
   .card-meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; color: var(--text2); flex-wrap: wrap; }
   .stakes-pill { background: #FAEEDA; color: #633806; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
   .positions { display: flex; gap: 8px; margin-top: 10px; }
@@ -287,6 +293,14 @@
   <div class="sheet-handle"></div>
   <h2 id="sheet-new-title">New bet</h2>
   <div class="field">
+    <label>Bet type</label>
+    <select id="f-bet-type" onchange="onBetTypeChange()">
+      <option value="h2h">Head to Head</option>
+      <option value="ou">Over / Under</option>
+      <option value="multi">Multiple Entry</option>
+    </select>
+  </div>
+  <div class="field">
     <label>Claim / topic</label>
     <textarea id="f-topic" placeholder="E.g. Arsenal will win the league by 2027" rows="2"></textarea>
   </div>
@@ -297,10 +311,44 @@
       <select id="f-b-name"><option value="">Select a friend...</option></select>
     </div>
   </div>
-  <div class="row2">
-    <div class="field"><label>A's side</label><input id="f-a-pos" placeholder="Yes, for sure" /></div>
-    <div class="field"><label>B's side</label><input id="f-b-pos" placeholder="No chance" /></div>
+
+  <!-- Head to Head fields -->
+  <div id="f-h2h-fields">
+    <div class="row2">
+      <div class="field"><label>A's side</label><input id="f-a-pos" placeholder="Yes, for sure" /></div>
+      <div class="field"><label>B's side</label><input id="f-b-pos" placeholder="No chance" /></div>
+    </div>
   </div>
+
+  <!-- Over/Under fields -->
+  <div id="f-ou-fields" style="display:none">
+    <div class="field">
+      <label>Line</label>
+      <input id="f-ou-line" placeholder="E.g. 49.5 points" />
+    </div>
+    <div class="row2">
+      <div class="field"><label>A takes</label><input value="Over" readonly style="opacity:0.7" /></div>
+      <div class="field"><label>B takes</label><input value="Under" readonly style="opacity:0.7" /></div>
+    </div>
+  </div>
+
+  <!-- Multiple Entry fields -->
+  <div id="f-multi-fields" style="display:none">
+    <div class="field">
+      <label>A's pick</label>
+      <input id="f-multi-a-pick" placeholder="E.g. Chiefs win" />
+    </div>
+    <div class="field">
+      <label>B's pick</label>
+      <input id="f-multi-b-pick" placeholder="E.g. Eagles win" />
+    </div>
+    <div class="field">
+      <label>Pool outcomes <span style="font-size:11px;color:var(--text2)">(all possible results)</span></label>
+      <div id="f-multi-entries"></div>
+      <button class="btn btn-sm" style="margin-top:6px" onclick="addMultiEntry()"><i class="ti ti-plus"></i> Add outcome</button>
+    </div>
+  </div>
+
   <div class="field"><label>Stakes / wager</label><input id="f-stakes" placeholder="Loser buys dinner" /></div>
   <div class="row2">
     <div class="field"><label>Date made</label><input id="f-date" type="date" /></div>
@@ -325,6 +373,29 @@
   <div class="sheet-actions">
     <button class="btn" onclick="closeSheet('resolve')">Cancel</button>
     <button class="btn btn-primary" onclick="confirmResolve()">Confirm</button>
+  </div>
+</div>
+
+<!-- Counter Sheet -->
+<div class="sheet-backdrop" id="bd-counter" onclick="closeSheet('counter')"></div>
+<div class="sheet" id="sheet-counter">
+  <div class="sheet-handle"></div>
+  <h2>Counter proposal</h2>
+  <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Edit the bet details and send a counter back.</p>
+  <div class="field">
+    <label>Claim / topic</label>
+    <textarea id="c-topic" rows="2"></textarea>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Your side</label><input id="c-b-pos" placeholder="Your position" /></div>
+    <div class="field"><label>Their side</label><input id="c-a-pos" placeholder="Their position" /></div>
+  </div>
+  <div class="field"><label>Stakes / wager</label><input id="c-stakes" /></div>
+  <div class="field"><label>Deadline (optional)</label><input id="c-deadline" type="date" /></div>
+  <div class="field"><label>Notes (optional)</label><textarea id="c-notes" rows="2"></textarea></div>
+  <div class="sheet-actions">
+    <button class="btn" onclick="closeSheet('counter')">Cancel</button>
+    <button class="btn btn-primary" onclick="submitCounter()">Send counter</button>
   </div>
 </div>
 
@@ -884,6 +955,8 @@ async function load() {
           }
           currentUser = username;
           currentUserDisplayName = userDoc.data().displayName || displayNameFor(user);
+          // Update lastSeen
+          try { await usersCol.doc(user.uid).set({ lastSeen: Date.now() }, { merge: true }); } catch(e) {}
           await loadFriends();
           showApp();
         } else {
@@ -932,11 +1005,34 @@ function closeSheet(name) {
   document.body.style.overflow = '';
 }
 
+function onBetTypeChange() {
+  const t = document.getElementById('f-bet-type').value;
+  document.getElementById('f-h2h-fields').style.display = t === 'h2h' ? 'block' : 'none';
+  document.getElementById('f-ou-fields').style.display = t === 'ou' ? 'block' : 'none';
+  document.getElementById('f-multi-fields').style.display = t === 'multi' ? 'block' : 'none';
+}
+
+function addMultiEntry(value='') {
+  const container = document.getElementById('f-multi-entries');
+  const idx = container.children.length;
+  const div = document.createElement('div');
+  div.className = 'multi-outcome';
+  div.innerHTML = `<input type="text" placeholder="Outcome ${idx+1}" value="${value}" /><button class="btn-icon" onclick="this.parentElement.remove()" aria-label="Remove"><i class="ti ti-x"></i></button>`;
+  container.appendChild(div);
+}
+
+function getMultiEntries() {
+  return Array.from(document.querySelectorAll('#f-multi-entries input')).map(i => i.value.trim()).filter(Boolean);
+}
+
 function openNew() {
   editId = null;
   document.getElementById('sheet-new-title').textContent = 'New bet';
-  ['f-topic','f-a-pos','f-b-pos','f-stakes','f-notes','f-deadline'].forEach(id => document.getElementById(id).value = '');
+  ['f-topic','f-a-pos','f-b-pos','f-stakes','f-notes','f-deadline','f-ou-line','f-multi-a-pick','f-multi-b-pick'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('f-bet-type').value = 'h2h';
+  document.getElementById('f-multi-entries').innerHTML = '';
+  onBetTypeChange();
   if (currentUser) document.getElementById('f-a-name').value = currentUser;
   populateFriendDropdown();
   document.getElementById('f-b-name').value = '';
@@ -948,11 +1044,38 @@ function saveEntry() {
   const pA = document.getElementById('f-a-name').value.trim();
   const bSel = document.getElementById('f-b-name');
   const pB = bSel.value;
+  const betType = document.getElementById('f-bet-type').value;
   if (!topic || !pA || !pB) { alert('Please fill in the claim and select a friend.'); return; }
+
+  let posA = '', posB = '', ouLine = null, multiEntries = null, multiPickA = null, multiPickB = null;
+
+  if (betType === 'h2h') {
+    posA = document.getElementById('f-a-pos').value.trim();
+    posB = document.getElementById('f-b-pos').value.trim();
+  } else if (betType === 'ou') {
+    ouLine = document.getElementById('f-ou-line').value.trim();
+    posA = 'Over';
+    posB = 'Under';
+    if (!ouLine) { alert('Please enter a line for the Over/Under.'); return; }
+  } else if (betType === 'multi') {
+    multiPickA = document.getElementById('f-multi-a-pick').value.trim();
+    multiPickB = document.getElementById('f-multi-b-pick').value.trim();
+    multiEntries = getMultiEntries();
+    posA = multiPickA || '—';
+    posB = multiPickB || '—';
+    if (!multiPickA || !multiPickB) { alert('Please enter a pick for both players.'); return; }
+  }
+
   const entry = {
-    id: editId || Date.now().toString(), type: 'bet', topic, personA: pA, personB: pB,
-    posA: document.getElementById('f-a-pos').value.trim(),
-    posB: document.getElementById('f-b-pos').value.trim(),
+    id: editId || Date.now().toString(),
+    type: 'bet',
+    betType: betType,
+    topic, personA: pA, personB: pB,
+    posA, posB,
+    ouLine: ouLine || null,
+    multiEntries: multiEntries || null,
+    multiPickA: multiPickA || null,
+    multiPickB: multiPickB || null,
     stakes: document.getElementById('f-stakes').value.trim(),
     notes: document.getElementById('f-notes').value.trim(),
     created: document.getElementById('f-date').value || new Date().toISOString().split('T')[0],
@@ -1016,10 +1139,20 @@ function viewEntry(id) {
   const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
   const notes = e.notes ? `<div class="divider-label">Notes</div><p style="font-size:14px;line-height:1.6;color:var(--text2)">${e.notes}</p>` : '';
   const dl = e.deadline ? ` · Due ${new Date(e.deadline+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : '';
+  const ouSection = e.betType==='ou' && e.ouLine ? `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Line: <strong style="color:var(--text)">${e.ouLine}</strong></div>` : '';
+  const multiSection = e.betType==='multi' && e.multiEntries && e.multiEntries.length ? `
+    <div class="divider-label">Pool outcomes</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+      ${e.multiEntries.map(o=>`<span class="stakes-pill" style="background:var(--bg3);color:var(--text2)">${o}</span>`).join('')}
+    </div>` : '';
   document.getElementById('sheet-view-content').innerHTML = `
-    <h2 style="font-size:17px;margin-bottom:6px;line-height:1.4">${e.topic}</h2>
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
+      <h2 style="font-size:17px;line-height:1.4;flex:1">${e.topic}</h2>
+      ${betTypeBadge(e)}
+    </div>
     <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Made ${new Date(e.created+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}${dl}</p>
     ${stakes ? `<div style="margin-bottom:12px">${stakes}</div>` : ''}
+    ${ouSection}${multiSection}
     <div class="divider-label">Sides</div>
     <div class="positions">
       <div class="position"><div class="pos-label">Person A</div><div class="pos-name">@${e.personA}</div><div class="pos-stance">${e.posA||'—'}</div></div>
@@ -1029,6 +1162,7 @@ function viewEntry(id) {
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       ${e.status==='proposed' && e.personB===currentUser ? `
         <button class="btn btn-primary btn-sm" onclick="acceptBet('${e.id}');closeSheet('view')"><i class="ti ti-check"></i> Accept</button>
+        <button class="btn btn-sm" onclick="openCounter('${e.id}');closeSheet('view')"><i class="ti ti-refresh"></i> Counter</button>
         <button class="btn btn-sm" style="color:#A32D2D" onclick="declineBet('${e.id}');closeSheet('view')"><i class="ti ti-x"></i> Decline</button>
       ` : ''}
       ${e.status==='proposed' && e.personA===currentUser ? `<p style="font-size:12px;color:var(--text2)">Waiting for @${e.personB} to accept</p>` : ''}
@@ -1050,6 +1184,13 @@ function deadlineLabel(dl) {
   return `<span class="deadline-ok"><i class="ti ti-calendar"></i> ${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>`;
 }
 
+function betTypeBadge(e) {
+  if (!e.betType || e.betType === 'h2h') return `<span class="badge badge-h2h">H2H</span>`;
+  if (e.betType === 'ou') return `<span class="badge badge-ou">O/U</span>`;
+  if (e.betType === 'multi') return `<span class="badge badge-multi">Pool</span>`;
+  return '';
+}
+
 function cardHTML(e) {
   const sb = e.status==='open'
     ? `<span class="badge badge-open">Open</span>`
@@ -1059,12 +1200,16 @@ function cardHTML(e) {
   const winner = e.winner ? `<div class="winner-banner"><i class="ti ti-trophy"></i> ${e.winner==='draw'?'Draw':e.winner+' won'}${e.resolveNote?' — '+e.resolveNote:''}</div>` : '';
   const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
   const dl = e.status==='open' ? deadlineLabel(e.deadline) : '';
+  const ouExtra = e.betType==='ou' && e.ouLine ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">Line: <strong>${e.ouLine}</strong></div>` : '';
+  const multiExtra = e.betType==='multi' && e.multiEntries && e.multiEntries.length
+    ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">Pool: ${e.multiEntries.join(' · ')}</div>` : '';
   return `<div class="card" onclick="viewEntry('${e.id}')">
-    <div class="card-head"><div class="card-title">${e.topic}</div>${sb}</div>
+    <div class="card-head"><div class="card-title">${e.topic}</div><div style="display:flex;gap:4px;flex-shrink:0">${betTypeBadge(e)}${sb}</div></div>
     <div class="card-meta">
       <span style="font-size:11px;color:var(--text2)">${new Date(e.created+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>
       ${stakes}${dl}
     </div>
+    ${ouExtra}${multiExtra}
     <div class="positions">
       <div class="position"><div class="pos-label">Person A</div><div class="pos-name">@${e.personA}${e.personA===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posA||'—'}</div></div>
       <div class="position"><div class="pos-label">Person B</div><div class="pos-name">@${e.personB}${e.personB===currentUser?'<span class="you-tag">YOU</span>':''}</div><div class="pos-stance">${e.posB||'—'}</div></div>
@@ -1117,6 +1262,53 @@ function declineBet(id) {
   updateEntryInDb(id, { status: 'declined' });
 }
 
+let counterId = null;
+
+function openCounter(id) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  counterId = id;
+  // Pre-fill with original bet details, swapping sides since counter comes from Person B
+  document.getElementById('c-topic').value = e.topic || '';
+  document.getElementById('c-b-pos').value = e.posB || ''; // B's position (now the counter-proposer)
+  document.getElementById('c-a-pos').value = e.posA || ''; // A's position
+  document.getElementById('c-stakes').value = e.stakes || '';
+  document.getElementById('c-deadline').value = e.deadline || '';
+  document.getElementById('c-notes').value = e.notes || '';
+  openSheet('counter');
+}
+
+async function submitCounter() {
+  const original = entries.find(x => x.id === counterId);
+  if (!original) return;
+
+  // Decline the original
+  await updateEntryInDb(original.id, { status: 'declined' });
+
+  // Create new proposed bet with sides swapped (counter comes from Person B → now Person A)
+  const counter = {
+    id: Date.now().toString(),
+    type: 'bet',
+    topic: document.getElementById('c-topic').value.trim(),
+    personA: currentUser,           // counter-proposer
+    personB: original.personA,      // original proposer now receives
+    posA: document.getElementById('c-b-pos').value.trim(),
+    posB: document.getElementById('c-a-pos').value.trim(),
+    stakes: document.getElementById('c-stakes').value.trim(),
+    notes: document.getElementById('c-notes').value.trim(),
+    created: new Date().toISOString().split('T')[0],
+    deadline: document.getElementById('c-deadline').value || null,
+    status: 'proposed',
+    winner: null, resolveNote: null, resolvedDate: null,
+    createdBy: currentUser,
+    isCounter: true,
+  };
+
+  if (!counter.topic) { alert('Please fill in the claim.'); return; }
+  await saveEntryToDb(counter);
+  closeSheet('counter');
+}
+
 function renderPendingSection() {
   const proposed = entries.filter(e =>
     e.status === 'proposed' &&
@@ -1132,6 +1324,7 @@ function renderPendingSection() {
       ? `<p style="font-size:12px;color:var(--text2);margin-top:10px">Waiting for @${e.personB} to accept</p>`
       : `<div class="card-actions">
           <button class="btn btn-sm btn-primary" onclick="acceptBet('${e.id}');event.stopPropagation()"><i class="ti ti-check"></i> Accept</button>
+          <button class="btn btn-sm" onclick="openCounter('${e.id}');event.stopPropagation()"><i class="ti ti-refresh"></i> Counter</button>
           <button class="btn btn-sm" style="color:#A32D2D" onclick="declineBet('${e.id}');event.stopPropagation()"><i class="ti ti-x"></i> Decline</button>
          </div>`;
     const stakes = e.stakes ? `<span class="stakes-pill"><i class="ti ti-coins"></i> ${e.stakes}</span>` : '';
